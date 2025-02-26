@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Doom-Style Game</title>
+    <style>
+      body {
+        margin: 0;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+      #ui {
+        position: absolute;
+        bottom: 20px;
+        width: 100%;
+        text-align: center;
+        color: white;
+        font-family: Arial, sans-serif;
+        font-size: 24px;
+        text-shadow: 2px 2px 4px #000;
+      }
+      #crosshair {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 20px;
+        height: 20px;
+        margin-left: -10px;
+        margin-top: -10px;
+        color: white;
+        font-size: 20px;
+        text-align: center;
+        pointer-events: none;
+      }
+      #gameOver {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: red;
+        font-family: Arial, sans-serif;
+        font-size: 48px;
+        text-align: center;
+        display: none;
+      }
+      #startScreen {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.8);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        color: red;
+        font-family: Arial, sans-serif;
+      }
+      #startScreen h1 {
+        font-size: 48px;
+        margin-bottom: 20px;
+      }
+      #startScreen button {
+        padding: 10px 20px;
+        font-size: 24px;
+        background-color: red;
+        color: white;
+        border: none;
+        cursor: pointer;
+      }
+      #score {
+        font-weight: bold;
+        color: yellow;
+      }
+      /* Add control message display */
+      #controlMessage {
+        position: absolute;
+        top: 20px;
+        width: 100%;
+        text-align: center;
+        color: white;
+        font-family: Arial, sans-serif;
+        font-size: 16px;
+        text-shadow: 1px 1px 2px #000;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="startScreen">
+      <h1>DOOM-STYLE GAME</h1>
+      <p>Collect all tokens and defeat all enemies to win!</p>
+      <p>Controls: WASD to move, Mouse to look, Click to shoot</p>
+      <button id="startButton">START GAME</button>
+    </div>
+    <div id="crosshair">+</div>
+    <div id="ui">
+      <div>
+        Health: <span id="health">100</span> | Tokens:
+        <span id="tokens">0</span>/<span id="totalTokens">0</span> | Enemies:
+        <span id="enemies">0</span>/<span id="totalEnemies">0</span> | Score:
+        <span id="score">0</span>
+      </div>
+    </div>
+    <div id="controlMessage">
+      Click to enable mouse control. Use WASD to move.
+    </div>
+    <div id="gameOver">
+      <div id="gameOverMessage"></div>
+      <button id="restartButton">Play Again</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+      // Game state variables
+      let scene, camera, renderer, player;
+      let keyboard = {};
+      let tokens = [];
+      let enemies = [];
+      let bullets = [];
+      let walls = [];
+      let playerHealth = 100;
+      let tokensCollected = 0;
+      let enemiesDefeated = 0;
+      let isGameOver = false;
+      let lastTime = 0;
+      let pointerLocked = false;
+      let playerScore = 0;
+      let gameStarted = false;
+
+      // Game settings
+      const PLAYER_SPEED = 5;
+      const ENEMY_SPEED = 2;
+      const BULLET_SPEED = 20;
+      const WALL_HEIGHT = 4;
+      const PLAYER_HEIGHT = 1.8;
+      const MAP_SIZE = 40;
+      const TOTAL_TOKENS = 10;
+      const TOTAL_ENEMIES = 5;
+
+      // Initialize game
+      function init() {
+        // Create scene
+        scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x111111);
+        scene.fog = new THREE.Fog(0x111111, 0, 40);
+
+        // Create camera
+        camera = new THREE.PerspectiveCamera(
+          75,
+          window.innerWidth / window.innerHeight,
+          0.1,
+          1000
+        );
+        camera.position.y = PLAYER_HEIGHT;
+
+        // Create renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Player setup
+        player = {
+          position: new THREE.Vector3(0, PLAYER_HEIGHT, 0),
+          velocity: new THREE.Vector3(0, 0, 0),
+          rotation: new THREE.Euler(0, 0, 0, "YXZ"),
+          speed: PLAYER_SPEED,
+          moveForward: false,
+          moveBackward: false,
+          moveLeft: false,
+          moveRight: false,
+        };
+
+        // Create lighting (increased brightness by ~30%)
+        const ambientLight = new THREE.AmbientLight(0x909090); // Increased from 0x404040
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.7); // Increased from 0.5
+        directionalLight.position.set(1, 1, 1);
+        scene.add(directionalLight);
+
+        // Create floor
+        const floorGeometry = new THREE.PlaneGeometry(
+          MAP_SIZE * 2,
+          MAP_SIZE * 2
+        );
+        const floorMaterial = new THREE.MeshStandardMaterial({
+          color: 0x555555, // Lightened from 0x333333
+          roughness: 0.8,
+          metalness: 0.2,
+        });
+        const floor = new THREE.Mesh(floorGeometry, floorMaterial);
+        floor.rotation.x = -Math.PI / 2;
+        floor.position.y = 0;
+        scene.add(floor);
+
+        // Create ceiling
+        const ceilingGeometry = new THREE.PlaneGeometry(
+          MAP_SIZE * 2,
+          MAP_SIZE * 2
+        );
+        const ceilingMaterial = new THREE.MeshStandardMaterial({
+          color: 0x222222, // Lightened from 0x111111
+          roughness: 0.9,
+          metalness: 0.1,
+        });
+        const ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
+        ceiling.rotation.x = Math.PI / 2;
+        ceiling.position.y = WALL_HEIGHT;
+        scene.add(ceiling);
+
+        // Create level
+        createLevel();
+
+        // Update UI
+        document.getElementById("totalTokens").textContent = TOTAL_TOKENS;
+        document.getElementById("totalEnemies").textContent = TOTAL_ENEMIES;
+        document.getElementById("score").textContent = playerScore;
+
+        // Input event listeners (setting up early to debug)
+        document.addEventListener("keydown", onKeyDown, false);
+        document.addEventListener("keyup", onKeyUp, false);
+        document.addEventListener("mousedown", onMouseDown, false);
+        document.addEventListener("mousemove", onMouseMove, false);
+
+        // Pointer lock setup
+        renderer.domElement.addEventListener(
+          "click",
+          requestPointerLock,
+          false
+        );
+
+        document.addEventListener(
+          "pointerlockchange",
+          pointerLockChange,
+          false
+        );
+        document.addEventListener(
+          "mozpointerlockchange",
+          pointerLockChange,
+          false
+        );
+        document.addEventListener(
+          "webkitpointerlockchange",
+          pointerLockChange,
+          false
+        );
+
+        // Window resize handler
+        window.addEventListener("resize", () => {
+          camera.aspect = window.innerWidth / window.innerHeight;
+          camera.updateProjectionMatrix();
+          renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // Start button
+        document.getElementById("startButton").addEventListener("click", () => {
+          document.getElementById("startScreen").style.display = "none";
+          document.getElementById("controlMessage").style.display = "block";
+          gameStarted = true;
+          requestPointerLock();
+          animate(0);
+        });
+
+        // Restart button
+        document
+          .getElementById("restartButton")
+          .addEventListener("click", restartGame);
+      }
+
+      // Request Pointer Lock with better browser support
+      function requestPointerLock() {
+        if (gameStarted) {
+          const element = renderer.domElement;
+          element.requestPointerLock =
+            element.requestPointerLock ||
+            element.mozRequestPointerLock ||
+            element.webkitRequestPointerLock;
+          element.requestPointerLock();
+        }
+      }
+
+      // Handle Pointer Lock change
+      function pointerLockChange() {
+        if (
+          document.pointerLockElement === renderer.domElement ||
+          document.mozPointerLockElement === renderer.domElement ||
+          document.webkitPointerLockElement === renderer.domElement
+        ) {
+          pointerLocked = true;
+          document.getElementById("controlMessage").style.display = "none";
+        } else {
+          pointerLocked = false;
+          if (gameStarted && !isGameOver) {
+            document.getElementById("controlMessage").style.display = "block";
+          }
+        }
+      }
+
+      // Create level with walls, tokens, and enemies
+      function createLevel() {
+        // Create outer walls
+        createWall(-MAP_SIZE / 2, 0, 0, MAP_SIZE, 0); // Left
+        createWall(MAP_SIZE / 2, 0, 0, MAP_SIZE, 0); // Right
+        createWall(0, 0, -MAP_SIZE / 2, 0, MAP_SIZE); // Back
+        createWall(0, 0, MAP_SIZE / 2, 0, MAP_SIZE); // Front
+
+        // Create inner walls
+        createWall(-15, 0, -5, 10, 0);
+        createWall(5, 0, 5, 20, 0);
+        createWall(-10, 0, 15, 0, 10);
+        createWall(15, 0, -15, 0, 15);
+        createWall(-5, 0, -20, 0, 10);
+
+        // Create tokens (updated to 10)
+        const tokenPositions = [
+          [-15, 10],
+          [12, -12],
+          [-12, -8],
+          [18, 8],
+          [5, -15],
+          [-8, 18],
+          [-18, -18],
+          [15, 15],
+          [-10, -15],
+          [8, -5], // Added two more positions
+        ];
+
+        for (let i = 0; i < TOTAL_TOKENS; i++) {
+          const [x, z] = tokenPositions[i];
+          createToken(x, z);
+        }
+
+        // Create enemies
+        const enemyPositions = [
+          [-10, -10],
+          [10, 10],
+          [-18, 0],
+          [18, -5],
+          [0, 18],
+        ];
+
+        for (let i = 0; i < TOTAL_ENEMIES; i++) {
+          const [x, z] = enemyPositions[i];
+          createEnemy(x, z);
+        }
+      }
+
+      // Create a wall
+      function createWall(x, y, z, width, depth) {
+        const wallGeometry = new THREE.BoxGeometry(
+          width || 1,
+          WALL_HEIGHT,
+          depth || 1
+        );
+        const wallMaterial = new THREE.MeshStandardMaterial({
+          color: 0xa06030, // Lightened from 0x8B4513
+          roughness: 0.7,
+          metalness: 0.2,
+        });
+        const wall = new THREE.Mesh(wallGeometry, wallMaterial);
+        wall.position.set(x, y + WALL_HEIGHT / 2, z);
+        scene.add(wall);
+
+        walls.push({
+          mesh: wall,
+          width: width || 1,
+          depth: depth || 1,
+          position: new THREE.Vector3(x, y, z),
+        });
+      }
+
+      // Create a token (animated fire)
+      function createToken(x, z) {
+        const tokenGroup = new THREE.Group();
+        tokenGroup.position.set(x, 1, z);
+
+        // Token base (pedestal)
+        const baseGeometry = new THREE.CylinderGeometry(0.3, 0.5, 0.5, 8);
+        const baseMaterial = new THREE.MeshStandardMaterial({
+          color: 0x555555,
+        }); // Lightened from 0x444444
+        const base = new THREE.Mesh(baseGeometry, baseMaterial);
+        base.position.y = 0.25;
+        tokenGroup.add(base);
+
+        // Token fire (cone particles)
+        const fireGroup = new THREE.Group();
+
+        // Create multiple flame particles
+        const flameColors = [0xff9500, 0xff5500, 0xff0000];
+
+        for (let i = 0; i < 5; i++) {
+          const flameGeometry = new THREE.ConeGeometry(0.2, 1, 8);
+          const flameMaterial = new THREE.MeshBasicMaterial({
+            color: flameColors[Math.floor(Math.random() * flameColors.length)],
+            transparent: true,
+            opacity: 0.8,
+          });
+          const flame = new THREE.Mesh(flameGeometry, flameMaterial);
+
+          // Random position within the fire area
+          flame.position.set(
+            (Math.random() - 0.5) * 0.2,
+            0.5 + Math.random() * 0.5,
+            (Math.random() - 0.5) * 0.2
+          );
+
+          // Random rotation
+          flame.rotation.x = (Math.random() - 0.5) * 0.5;
+          flame.rotation.z = (Math.random() - 0.5) * 0.5;
+
+          // Random scale
+          const scale = 0.5 + Math.random() * 0.5;
+          flame.scale.set(scale, scale, scale);
+
+          // Add animation data
+          flame.userData = {
+            speed: 0.3 + Math.random() * 0.5,
+            verticalOffset: Math.random() * Math.PI * 2,
+          };
+
+          fireGroup.add(flame);
+        }
+
+        tokenGroup.add(fireGroup);
+        scene.add(tokenGroup);
+
+        // Point light for the fire (increased intensity for more brightness)
+        const light = new THREE.PointLight(0xff5500, 1.5, 6); // Increased intensity and range
+        light.position.set(0, 1, 0);
+        tokenGroup.add(light);
+
+        tokens.push({
+          group: tokenGroup,
+          fireGroup: fireGroup,
+          light: light,
+          collected: false,
+          position: new THREE.Vector3(x, 1, z),
+          radius: 0.7,
+        });
+      }
+
+      // Create an enemy
+      function createEnemy(x, z) {
+        const enemyGroup = new THREE.Group();
+        enemyGroup.position.set(x, 1, z);
+
+        // Enemy body
+        const bodyGeometry = new THREE.BoxGeometry(1, 1.8, 1);
+        const bodyMaterial = new THREE.MeshStandardMaterial({
+          color: 0xbb0000,
+        }); // Lightened from 0x990000
+        const body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+        body.position.y = 0.9;
+        enemyGroup.add(body);
+
+        // Enemy head
+        const headGeometry = new THREE.SphereGeometry(0.4, 8, 8);
+        const headMaterial = new THREE.MeshStandardMaterial({
+          color: 0x880000,
+        }); // Lightened from 0x660000
+        const head = new THREE.Mesh(headGeometry, headMaterial);
+        head.position.y = 2.1;
+        enemyGroup.add(head);
+
+        // Enemy eyes
+        const eyeGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const eyeMaterial = new THREE.MeshBasicMaterial({ color: 0xff3333 }); // Lightened from 0xff0000
+
+        const leftEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+        leftEye.position.set(0.2, 2.2, 0.3);
+        enemyGroup.add(leftEye);
+
+        const rightEye = new THREE.Mesh(eyeGeometry, eyeMaterial);
+        rightEye.position.set(-0.2, 2.2, 0.3);
+        enemyGroup.add(rightEye);
+
+        scene.add(enemyGroup);
+
+        enemies.push({
+          group: enemyGroup,
+          defeated: false,
+          position: new THREE.Vector3(x, 1, z),
+          velocity: new THREE.Vector3(0, 0, 0),
+          health: 100,
+          lastAttackTime: 0,
+          radius: 0.8,
+        });
+      }
+
+      // Shoot a bullet
+      function shootBullet() {
+        if (isGameOver) return;
+
+        const bulletGeometry = new THREE.SphereGeometry(0.1, 8, 8);
+        const bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+        const bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+
+        // Position bullet at player position
+        bullet.position.copy(player.position);
+
+        // Set bullet direction based on camera direction
+        const direction = new THREE.Vector3(0, 0, -1);
+        direction.applyQuaternion(camera.quaternion);
+
+        scene.add(bullet);
+
+        bullets.push({
+          mesh: bullet,
+          direction: direction,
+          distance: 0,
+        });
+      }
+
+      // Handle keyboard input
+      // Handle keyboard input
+      function onKeyDown(event) {
+        switch (event.code) {
+          case "KeyW":
+            player.moveForward = true;
+            break;
+          case "KeyS":
+            player.moveBackward = true;
+            break;
+          case "KeyA":
+            player.moveLeft = true;
+            break;
+          case "KeyD":
+            player.moveRight = true;
+            break;
+        }
+      }
+
+      // Handle key release
+      function onKeyUp(event) {
+        switch (event.code) {
+          case "KeyW":
+            player.moveForward = false;
+            break;
+          case "KeyS":
+            player.moveBackward = false;
+            break;
+          case "KeyA":
+            player.moveLeft = false;
+            break;
+          case "KeyD":
+            player.moveRight = false;
+            break;
+        }
+      }
+
+      // Handle mouse movement
+      function onMouseMove(event) {
+        if (!pointerLocked) return;
+        player.rotation.y -= event.movementX * 0.002;
+        player.rotation.x -= event.movementY * 0.002;
+        player.rotation.x = Math.max(
+          -Math.PI / 2,
+          Math.min(Math.PI / 2, player.rotation.x)
+        );
+      }
+
+      // Game loop
+      function animate(time) {
+        if (!gameStarted) return;
+        requestAnimationFrame(animate);
+        const delta = (time - lastTime) / 1000;
+        lastTime = time;
+        updatePlayer(delta);
+        updateEnemies(delta);
+        updateBullets(delta);
+        checkCollisions();
+        updateUI();
+        renderer.render(scene, camera);
+      }
+
+      // Update player position and movement
+      function updatePlayer(delta) {
+        const direction = new THREE.Vector3();
+        if (player.moveForward) direction.z -= 1;
+        if (player.moveBackward) direction.z += 1;
+        if (player.moveLeft) direction.x -= 1;
+        if (player.moveRight) direction.x += 1;
+        direction.normalize();
+        player.position.add(
+          direction
+            .applyEuler(player.rotation)
+            .multiplyScalar(player.speed * delta)
+        );
+        camera.position.copy(player.position);
+        camera.rotation.copy(player.rotation);
+      }
+
+      // Restart the game
+      function restartGame() {
+        window.location.reload();
+      }
+
+      // Initialize the game
+      init();
+
+      // Update enemy positions
+      function updateEnemies(delta) {
+        enemies.forEach((enemy) => {
+          if (enemy.defeated) return;
+
+          // Calculate direction to player
+          const direction = new THREE.Vector3();
+          direction.subVectors(player.position, enemy.position);
+          direction.y = 0; // Keep enemies on the ground
+          direction.normalize();
+
+          // Set enemy velocity
+          enemy.velocity.copy(direction).multiplyScalar(ENEMY_SPEED * delta);
+
+          // Update enemy position
+          enemy.position.add(enemy.velocity);
+          enemy.group.position.copy(enemy.position);
+
+          // Make enemy face the player
+          enemy.group.lookAt(
+            new THREE.Vector3(
+              player.position.x,
+              enemy.position.y,
+              player.position.z
+            )
+          );
+
+          // Check if enemy can attack player
+          const distanceToPlayer = enemy.position.distanceTo(player.position);
+          const currentTime = Date.now();
+
+          if (
+            distanceToPlayer < 2 &&
+            currentTime - enemy.lastAttackTime > 1000
+          ) {
+            // Enemy attacks player
+            playerHealth -= 10;
+            enemy.lastAttackTime = currentTime;
+
+            if (playerHealth <= 0) {
+              endGame(false);
+            }
+          }
+        });
+      }
+
+      // Update bullets
+      function updateBullets(delta) {
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          const bullet = bullets[i];
+
+          // Move bullet
+          bullet.mesh.position.add(
+            bullet.direction.clone().multiplyScalar(BULLET_SPEED * delta)
+          );
+
+          // Increase distance traveled
+          bullet.distance += BULLET_SPEED * delta;
+
+          // Remove bullet if it has traveled too far
+          if (bullet.distance > 50) {
+            scene.remove(bullet.mesh);
+            bullets.splice(i, 1);
+          }
+        }
+      }
+
+      // Check for collisions
+      function checkCollisions() {
+        // Check bullet-enemy collisions
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          const bullet = bullets[i];
+
+          // Check collision with enemies
+          for (let j = 0; j < enemies.length; j++) {
+            const enemy = enemies[j];
+            if (enemy.defeated) continue;
+
+            const distance = bullet.mesh.position.distanceTo(enemy.position);
+
+            if (distance < enemy.radius) {
+              // Bullet hit enemy
+              enemy.health -= 25;
+              scene.remove(bullet.mesh);
+              bullets.splice(i, 1);
+
+              // Enemy defeated
+              if (enemy.health <= 0) {
+                enemy.defeated = true;
+                scene.remove(enemy.group);
+                enemiesDefeated++;
+                playerScore += 100;
+
+                // Check if all enemies are defeated
+                checkWinCondition();
+              }
+
+              break;
+            }
+          }
+        }
+
+        // Check player-token collisions
+        tokens.forEach((token) => {
+          if (token.collected) return;
+
+          const distance = player.position.distanceTo(token.position);
+
+          if (distance < token.radius) {
+            // Player collected token
+            token.collected = true;
+            scene.remove(token.group);
+            tokensCollected++;
+            playerScore += 50;
+
+            // Check if all tokens are collected
+            checkWinCondition();
+          }
+        });
+
+        // Check player-wall collisions
+        const playerRadius = 0.5;
+        walls.forEach((wall) => {
+          const halfWidth = wall.width / 2;
+          const halfDepth = wall.depth / 2;
+
+          // Calculate the closest point on the wall to the player
+          const closestX = Math.max(
+            wall.position.x - halfWidth,
+            Math.min(player.position.x, wall.position.x + halfWidth)
+          );
+          const closestZ = Math.max(
+            wall.position.z - halfDepth,
+            Math.min(player.position.z, wall.position.z + halfDepth)
+          );
+
+          // Calculate distance from player to closest point
+          const distanceX = player.position.x - closestX;
+          const distanceZ = player.position.z - closestZ;
+          const distance = Math.sqrt(
+            distanceX * distanceX + distanceZ * distanceZ
+          );
+
+          // If collision detected, move player away from wall
+          if (distance < playerRadius) {
+            const angle = Math.atan2(distanceZ, distanceX);
+            const pushDistance = playerRadius - distance;
+
+            player.position.x += Math.cos(angle) * pushDistance;
+            player.position.z += Math.sin(angle) * pushDistance;
+          }
+        });
+      }
+
+      // Update UI elements
+      function updateUI() {
+        document.getElementById("health").textContent = playerHealth;
+        document.getElementById("tokens").textContent = tokensCollected;
+        document.getElementById("enemies").textContent = enemiesDefeated;
+        document.getElementById("score").textContent = playerScore;
+
+        // Animate tokens
+        tokens.forEach((token) => {
+          if (token.collected) return;
+
+          token.fireGroup.rotation.y += 0.02;
+
+          // Animate each flame
+          token.fireGroup.children.forEach((flame) => {
+            flame.position.y =
+              0.5 +
+              Math.random() * 0.1 +
+              Math.sin(Date.now() * 0.002 + flame.userData.verticalOffset) *
+                0.1;
+
+            // Random flickering
+            flame.scale.x = 0.5 + Math.random() * 0.2;
+            flame.scale.z = 0.5 + Math.random() * 0.2;
+          });
+
+          // Flicker light intensity
+          token.light.intensity = 1.3 + Math.random() * 0.4;
+        });
+      }
+
+      // Check if player has won
+      function checkWinCondition() {
+        if (
+          tokensCollected === TOTAL_TOKENS &&
+          enemiesDefeated === TOTAL_ENEMIES
+        ) {
+          endGame(true);
+        }
+      }
+
+      // Handle mouse button press
+      function onMouseDown(event) {
+        if (!pointerLocked || isGameOver) return;
+
+        // Left mouse button
+        if (event.button === 0) {
+          shootBullet();
+        }
+      }
+
+      // End the game
+      function endGame(won) {
+        isGameOver = true;
+        document.exitPointerLock();
+
+        const gameOverDiv = document.getElementById("gameOver");
+        const gameOverMessage = document.getElementById("gameOverMessage");
+
+        if (won) {
+          gameOverMessage.innerHTML = `YOU WIN!<br>Final Score: ${playerScore}`;
+          gameOverMessage.style.color = "#00ff00";
+        } else {
+          gameOverMessage.innerHTML = `GAME OVER<br>Final Score: ${playerScore}`;
+          gameOverMessage.style.color = "#ff0000";
+        }
+
+        gameOverDiv.style.display = "block";
+      }
+    </script>
+  </body>
+</html>
